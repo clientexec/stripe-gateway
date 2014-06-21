@@ -131,7 +131,12 @@ class PluginStripe extends GatewayPlugin
         $myCard = array(
             'number'    => $params['userCCNumber'],
             'exp_month' => $CCMo,
-            'exp_year'  => $CCYear
+            'exp_year'  => $CCYear,
+            'address_line1' => $params["userAddress"],
+            'address_city' => $params["userCity"],
+            'address_zip' => $params["userZipcode"],
+            'address_state' => $params["userState"],
+            'address_country' => $params["userCountry"]
         );
 
         $currency = $params['currencytype'];
