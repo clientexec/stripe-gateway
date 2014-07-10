@@ -85,7 +85,7 @@ class PluginStripe extends GatewayPlugin
             lang("Check CVV2") => array (
                                 "type"          =>"hidden",
                                 "description"   =>lang("Select YES if you want to accept CVV2 for this plugin."),
-                                "value"         =>"0"
+                                "value"         =>"1"
                                 )
         );
         return $variables;
@@ -129,13 +129,14 @@ class PluginStripe extends GatewayPlugin
         //    4000000000000069  Will be declined with an expired_card code.
         //    4000000000000119  Will be declined with a processing_error code.
         $myCard = array(
-            'number'    => $params['userCCNumber'],
-            'exp_month' => $CCMo,
-            'exp_year'  => $CCYear,
-            'address_line1' => $params["userAddress"],
-            'address_city' => $params["userCity"],
-            'address_zip' => $params["userZipcode"],
-            'address_state' => $params["userState"],
+            'number'          => $params['userCCNumber'],
+            'exp_month'       => $CCMo,
+            'exp_year'        => $CCYear,
+            'cvc'             => $params["userCCCVV2"],
+            'address_line1'   => $params["userAddress"],
+            'address_city'    => $params["userCity"],
+            'address_zip'     => $params["userZipcode"],
+            'address_state'   => $params["userState"],
             'address_country' => $params["userCountry"]
         );
 
