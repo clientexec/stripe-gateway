@@ -109,6 +109,7 @@ class PluginStripe extends GatewayPlugin
 
         $CCMo   = mb_substr($params['userCCExp'], 0, 2);
         $CCYear = mb_substr($params['userCCExp'], 3);
+        $CCcvc  = (is_numeric($params["userCCCVV2"]) ? $params["userCCCVV2"] : null);
 
         // TEST API KEY
         // vtUQeOtUnYr7PGCLQ96Ul4zqpDUO4sOE
@@ -132,7 +133,7 @@ class PluginStripe extends GatewayPlugin
             'number'          => $params['userCCNumber'],
             'exp_month'       => $CCMo,
             'exp_year'        => $CCYear,
-            'cvc'             => $params["userCCCVV2"],
+            'cvc'             => $CCcvc,
             'address_line1'   => $params["userAddress"],
             'address_city'    => $params["userCity"],
             'address_zip'     => $params["userZipcode"],
