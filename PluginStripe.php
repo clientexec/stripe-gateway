@@ -134,6 +134,7 @@ class PluginStripe extends GatewayPlugin
             'exp_month'       => $CCMo,
             'exp_year'        => $CCYear,
             'cvc'             => $CCcvc,
+            'name'            => $params["userFirstName"] . ' ' . $params["userLastName"];
             'address_line1'   => $params["userAddress"],
             'address_city'    => $params["userCity"],
             'address_zip'     => $params["userZipcode"],
