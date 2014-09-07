@@ -10,12 +10,6 @@ class PluginStripe extends GatewayPlugin
 {
     function getVariables()
     {
-        /* Specification
-            itemkey     - used to identify variable in your other functions
-            type          - text,textarea,yesno,password
-            description - description of the variable, displayed in ClientExec
-        */
-
         $variables = array (
             lang("Plugin Name") => array (
                                 "type"          =>"hidden",
@@ -111,8 +105,6 @@ class PluginStripe extends GatewayPlugin
         $CCYear = mb_substr($params['userCCExp'], 3);
         $CCcvc  = (is_numeric($params["userCCCVV2"]) ? $params["userCCCVV2"] : null);
 
-        // TEST API KEY
-        // vtUQeOtUnYr7PGCLQ96Ul4zqpDUO4sOE
         Stripe::setApiKey($params["plugin_stripe_Api Key"]);
 
         // TEST CREDIT CARD NUMBERS
@@ -143,11 +135,6 @@ class PluginStripe extends GatewayPlugin
         );
 
         $currency = $params['currencytype'];
-        /*
-        if(!in_array($currency, array("CAD", "USD"))){
-            $currency = "USD";
-        }
-        */
 
         $totalAmount = sprintf("%01.2f", round($params["invoiceTotal"], 2)) * 100;
 
@@ -227,4 +214,3 @@ class PluginStripe extends GatewayPlugin
         }
     }
 }
-?>
