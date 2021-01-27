@@ -23,7 +23,7 @@ class PluginStripe extends GatewayPlugin
                                 ),
             lang("Invoice After Signup") => array (
                                 "type"          =>"yesno",
-                                "description"   =>lang("Select YES if you want an invoice sent to the customer after signup is complete."),
+                                "description"   =>lang("Select YES if you want an invoice sent to the client after signup is complete."),
                                 "value"         =>"1"
                                 ),
             lang("Signup Name") => array (
@@ -33,7 +33,7 @@ class PluginStripe extends GatewayPlugin
                                 ),
             lang("Dummy Plugin") => array (
                                 "type"          =>"hidden",
-                                "description"   =>lang("1 = Only used to specify a billing type for a customer. 0 = full fledged plugin requiring complete functions"),
+                                "description"   =>lang("1 = Only used to specify a billing type for a client. 0 = full fledged plugin requiring complete functions"),
                                 "value"         =>"0"
                                 ),
             lang("Accept CC Number") => array (
@@ -70,11 +70,6 @@ class PluginStripe extends GatewayPlugin
                                 "type"          =>"hidden",
                                 "description"   =>lang("No description"),
                                 "value"         =>"1"
-                                ),
-            lang("30 Day Billing") => array (
-                                "type"          =>"hidden",
-                                "description"   =>lang("Select YES if you want ClientExec to treat monthly billing by 30 day intervals.  If you select NO then the same day will be used to determine intervals."),
-                                "value"         =>"0"
                                 ),
             lang("Check CVV2") => array (
                                 "type"          =>"hidden",
@@ -141,16 +136,16 @@ class PluginStripe extends GatewayPlugin
         if (isset($params['refund']) && $params['refund']) {
             $isRefund = true;
             $cPlugin->setAction('refund');
-        }else{
+        } else {
             $isRefund = false;
             $cPlugin->setAction('charge');
         }
 
-        try{
-            if ($isRefund){
+        try {
+            if ($isRefund) {
                 $charge = Stripe_Charge::retrieve($params['invoiceRefundTransactionId']);
                 $charge->refund();
-            }else{
+            } else {
                 $charge = Stripe_Charge::create(
                     array(
                         'card'        => $myCard,
@@ -176,39 +171,39 @@ class PluginStripe extends GatewayPlugin
                     )
                 );
             }
-        }catch(Exception $e){
+        } catch (Exception $e) {
             $cPlugin->PaymentRejected($this->user->lang("There was an error performing this operation.")." ".$e->getMessage());
             return $this->user->lang("There was an error performing this operation.")." ".$e->getMessage();
         }
 
-        if($charge->__get('failure_message') == ''){
-            if($charge->__get('object') == 'charge'){
+        if ($charge->__get('failure_message') == '') {
+            if ($charge->__get('object') == 'charge') {
                 $cPlugin->setTransactionID($charge->__get('id'));
 
-                if ($isRefund){
-                    if($charge->__get('refunded') == true){
+                if ($isRefund) {
+                    if ($charge->__get('refunded') == true) {
                         $chargeAmount = sprintf("%01.2f", round(($charge->__get('amount_refunded') / 100), 2));
                         $cPlugin->PaymentAccepted($chargeAmount, "Stripe refund of {$chargeAmount} was successfully processed.", $charge->__get('id'));
                         return array('AMOUNT' => $chargeAmount);
-                    }else{
+                    } else {
                         $cPlugin->PaymentRejected($this->user->lang("There was an error performing this operation."));
                         return $this->user->lang("There was an error performing this operation.");
                     }
-                }else{
-                    if($charge->__get('paid') == true){
+                } else {
+                    if ($charge->__get('paid') == true) {
                         $chargeAmount = sprintf("%01.2f", round(($charge->__get('amount') / 100), 2));
                         $cPlugin->PaymentAccepted($chargeAmount, "Stripe payment of {$chargeAmount} was accepted.", $charge->__get('id'));
                         return '';
-                    }else{
+                    } else {
                         $cPlugin->PaymentRejected($this->user->lang("There was an error performing this operation."));
                         return $this->user->lang("There was an error performing this operation.");
                     }
                 }
-            }else{
+            } else {
                 $cPlugin->PaymentRejected($this->user->lang("There was an error performing this operation."));
                 return $this->user->lang("There was an error performing this operation.");
             }
-        }else{
+        } else {
             $cPlugin->PaymentRejected($this->user->lang("There was an error performing this operation.")." ".$charge->__get('failure_message'));
             return $this->user->lang("There was an error performing this operation.")." ".$charge->__get('failure_message');
         }
