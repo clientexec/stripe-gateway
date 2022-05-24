@@ -1,0 +1,149 @@
+<script data-cfasync="false" src="https://js.stripe.com/v3/"></script>
+
+<!-- Display a payment form -->
+<div id="stripepayment-element">
+<!--Stripe.js injects the Payment Element-->
+</div>
+<div id="stripepayment-message" class="hidden"></div>
+</br>
+</br>
+<?php if ($this->from == 'signup') { ?>
+    <a style="margin-left:0px;cursor:pointer;" class="btn-success btn btn-lg customButton center-on-mobile stripeButton" id="customButton"></a>
+<?php } elseif ($this->from == 'invoice') { ?>
+    <button class="app-btns primary customButton stripeButton"><?php echo $this->user->lang('Pay Invoice'); ?></button>
+<?php } ?>
+
+<script data-cfasync="false" type="text/javascript">
+    const stripeObject = Stripe('<?php echo $this->publishableKey; ?>');
+    let elements;
+
+    stripeInitialize();
+    stripeCheckStatus();
+
+    $('.stripeButton').on('click', function(e) {
+        <?php if ($this->from == 'signup') { ?>
+            if ($('.stripeButton').hasClass('disabled')) {
+                return;
+            }
+
+            var password_validated = true;
+
+            <?php if (!$this->loggedIn) { ?>
+                $('.parsley-error-list.help-block').parent().removeClass('has-error');
+                $('.parsley-error-list.help-block').remove();
+                e.preventDefault();
+
+                //let's validate remote data
+                if ($('#password').length > 0) {
+                    if ($.trim($('#password').val()) == "") return;
+                    $.ajax({
+                        type: "POST",
+                        data: {"password": $('#password').val()},
+                        url: 'index.php?controller=signup&fuse=admin&action=testpasswordstrength',
+                        async: false,
+                        success : function(response) {
+                            json = clientexec.parseResponse(response);
+                            if (!json.valid) {
+                                password_validated = false;
+                                $('#password').parent().addClass('has-error');
+                                $('#password').after('<span class="help-block parsley-error-list">'+json.errorMessage+'</span>');
+                                $('#password').get(0).scrollIntoView();
+                            }
+                        }
+                    });
+                }
+            <?php } ?>
+
+            if (password_validated && $('#submitForm').parsley('validate')) {
+        <?php } ?>
+
+        // Open Elements with further options
+        stripeOpenHandler();
+
+        <?php if ($this->from == 'signup') { ?>
+            }
+        <?php } ?>
+
+        e.preventDefault();
+    });
+
+    // Fetches a payment intent and captures the client secret
+    async function stripeInitialize() {
+        elements = stripeObject.elements({
+            clientSecret: '<?php echo $this->clientSecret; ?>'
+        });
+
+        const stripePaymentElement = elements.create("payment");
+        stripePaymentElement.mount("#stripepayment-element");
+    }
+
+    async function stripeOpenHandler() {
+        stripeShowMessage("Please wait");
+        
+        const { error } = await stripeObject.confirmPayment({
+            elements,
+            confirmParams: {
+                return_url: '<?php echo $this->callbackUrl; ?>'
+            }
+        });
+
+        // This point will only be reached if there is an immediate error when
+        // confirming the payment. Otherwise, your customer will be redirected to
+        // your `return_url`. For some payment methods like iDEAL, your customer will
+        // be redirected to an intermediate site first to authorize the payment, then
+        // redirected to the `return_url`.
+        if (error.type === "card_error" || error.type === "validation_error") {
+            console.log(error.message);
+            stripeShowMessage(error.message);
+        } else {
+            console.log("An unexpected error occured.");
+            stripeShowMessage("An unexpected error occured.");
+        }
+
+        <?php if ($this->from == 'invoice' || $this->from == 'signup') { ?>
+            $('#submitButton').click();
+        <?php } ?>
+    }
+
+    // Fetches the payment intent status after payment submission
+    async function stripeCheckStatus() {
+        const stripeClientSecret = new URLSearchParams(window.location.search).get(
+            "payment_intent_client_secret"
+        );
+
+        if (!stripeClientSecret) {
+            return;
+        }
+
+        const { stripePaymentIntent } = await stripeObject.retrievePaymentIntent(stripeClientSecret);
+
+        switch (stripePaymentIntent.status) {
+            case "succeeded":
+                    stripeShowMessage("Payment succeeded!");
+                break;
+            case "processing":
+                stripeShowMessage("Your payment is processing.");
+                break;
+            case "requires_payment_method":
+                stripeShowMessage("Your payment was not successful, please try again.");
+                break;
+            default:
+                stripeShowMessage("Something went wrong.");
+                break;
+        }
+    }
+
+    // ------- UI helpers -------
+
+    function stripeShowMessage(stripeMessageText) {
+        const stripeMessageContainer = document.querySelector("#stripepayment-message");
+
+        stripeMessageContainer.classList.remove("hidden");
+        stripeMessageContainer.textContent = stripeMessageText;
+
+        setTimeout(function () {
+            stripeMessageContainer.classList.add("hidden");
+            stripeMessageText.textContent = "";
+        }, 4000);
+    }
+</script>

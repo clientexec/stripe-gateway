@@ -1,0 +1,64 @@
+<input type="hidden" id="stripeTokenId" name="stripe_plugincustomfields[stripeTokenId]" value="">
+<input type="hidden" id="stripe_currency" value="<?php echo $this->currency; ?>"/>
+
+<div id="card-element"></div>
+<div id="card-errors" role="alert"></div>
+<script data-cfasync="false" src="https://js.stripe.com/v3/"></script>
+<script data-cfasync="false" type="text/javascript">
+    var stripe = Stripe('<?php echo $this->publishableKey; ?>');
+    var elements = '';
+
+    function submitPayment() {
+        valid = $('#submitForm').parsley({
+            excluded: 'input[type=button], input[type=submit], input[type=reset], :hidden'
+        });
+        if (valid.isValid()) {
+            clientexec.mask();
+            stripe.confirmPayment({
+                elements,
+                redirect: "if_required"
+            }).then(function(result) {
+                if (result.error) {
+                    clientexec.unMask();
+                    clientexec.error(result.error.message);
+                } else {
+                    if (result.paymentIntent.status === 'succeeded') {
+                        cart.submit_form(0);
+                    }
+                }
+            });
+        }
+    }
+
+    function initStripe()
+    {
+
+        var totalPay = $('#totalPay_raw').val();
+        var paymentIntentSecret = '';
+
+
+        $.get('plugins/gateways/stripe/callback.php?initStripe=1&totalPay=' + totalPay + '&currency=' + $('#stripe_currency').val(), function( data ) {
+
+        }).done(function(data) {
+            paymentIntentSecret = data.secret;
+            $('#stripeTokenId').val(data.id);
+            elements = stripe.elements({clientSecret: paymentIntentSecret});
+
+            var card = elements.create("payment");
+            card.mount("#card-element");
+
+            card.on('change', function(event) {
+                var displayError = document.getElementById('card-errors');
+                if (event.error) {
+                    displayError.textContent = event.error.message;
+                } else {
+                    displayError.textContent = '';
+                }
+            });
+        });
+    }
+
+</script>
+
+
+<a style="margin-left:0px;cursor:pointer;" class="app-btns primary customButton center-on-mobile mt-3" onclick="submitPayment();" id="submitButton"></a>
