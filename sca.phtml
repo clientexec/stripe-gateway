@@ -8,7 +8,9 @@
 </br>
 </br>
 <?php if ($this->from == 'signup') { ?>
-    <a style="margin-left:0px;cursor:pointer;" class="btn-success btn btn-lg customButton center-on-mobile stripeButton" id="customButton"></a>
+    <a style="margin-left:0px;cursor:pointer;" class="btn-success btn btn-lg customButton center-on-mobile stripeButton <?php if (@$this->termsConditions) {
+?>disabled<?php
+} ?>" id="customButton"></a>
 <?php } elseif ($this->from == 'invoice') { ?>
     <button class="app-btns primary customButton stripeButton"><?php echo $this->user->lang('Pay Invoice'); ?></button>
 <?php } ?>

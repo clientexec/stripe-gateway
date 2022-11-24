@@ -12,6 +12,7 @@
         valid = $('#submitForm').parsley({
             excluded: 'input[type=button], input[type=submit], input[type=reset], :hidden'
         });
+        valid.validate();
         if (valid.isValid()) {
             clientexec.mask();
             stripe.confirmPayment({
@@ -61,4 +62,6 @@
 </script>
 
 
-<a style="margin-left:0px;cursor:pointer;" class="app-btns primary customButton center-on-mobile mt-3" onclick="submitPayment();" id="submitButton"></a>
+<a style="margin-left:0px;cursor:pointer;" class="app-btns primary customButton center-on-mobile mt-3 stripeButton <?php if (@$this->termsConditions) {
+?>disabled<?php
+} ?>" onclick="submitPayment();" id="submitButton"></a>
