@@ -139,6 +139,191 @@ class PluginStripe extends GatewayPlugin
         return $this->autopayment($params);
     }
 
+    public function getForm($params)
+    {
+        if ($this->getVariable('Stripe Gateway Publishable Key') == '') {
+            return '';
+        }
+
+        $this->view->from = $params['from'];
+
+        switch ($params['from']) {
+            case 'paymentmethod':
+                $strRet = '<input type="hidden" id="stripeUpdatePaymentMethod" name="stripe_plugincustomfields[stripeUpdatePaymentMethod]" value="1">'
+                    . '<button style="margin-left:0px;cursor:pointer;" class="btn btn-primary customButton stripeButton" id="customButton">' . $this->user->lang("Update Credit Card") . '</button>';
+
+                return $strRet;
+
+                break;
+
+            case 'signup':
+                $this->view->currency = $params['currency'];
+                $this->view->publishableKey = $this->getVariable('Stripe Gateway Publishable Key');
+
+                $urlFix = mb_substr(CE_Lib::getSoftwareURL(), -1, 1) == "//" ? '' : '/';
+                $this->view->returnUrl = CE_Lib::getSoftwareURL() . $urlFix . 'order.php?step=complete&pass=1';
+
+                return $this->view->render('form.phtml');
+
+            default:
+                $totalAmount = sprintf("%01.2f", round($params['invoiceBalanceDue'], 2));
+                $totalAmountCents = $totalAmount * 100;
+
+                //Pass this variable to your gateway to let it know where to send a callback.
+                $urlFix = mb_substr(CE_Lib::getSoftwareURL(), -1, 1) == "//" ? '' : '/';
+                $callbackUrl = CE_Lib::getSoftwareURL() . $urlFix . 'plugins/gateways/' . basename(dirname(__FILE__)) . '/callback.php?isElements=1&isSignup=0&session_id={CHECKOUT_SESSION_ID}';
+
+                try {
+                    // Use Stripe's bindings...
+                    $this->setupStripe();
+
+                    $profile_id = '';
+                    $payment_method = '';
+
+                    $invoice = new Invoice($params['invoiceId']);
+                    $user = new User($invoice->getUserID());
+                    $params['CustomerID']       = $user->getId();
+                    $params['userID']           = "CE" . $user->getId();
+                    $params['userEmail']        = $user->getEmail();
+                    $params['userFirstName']    = $user->getFirstName();
+                    $params['userLastName']     = $user->getLastName();
+                    $params['userOrganization'] = $user->getOrganization();
+                    $params['userAddress']      = $user->getAddress();
+                    $params['userCity']         = $user->getCity();
+                    $params['userState']        = $user->getState();
+                    $params['userZipcode']      = $user->getZipCode();
+                    $params['userCountry']      = $user->getCountry();
+                    $params['userPhone']        = $user->getPhone();
+                    $params['validate']         = false;
+
+                    $Billing_Profile_ID = '';
+                    $profile_id_array = array();
+
+                    if ($user->getCustomFieldsValue('Billing-Profile-ID', $Billing_Profile_ID) && $Billing_Profile_ID != '') {
+                        $profile_id_array = unserialize($Billing_Profile_ID);
+
+                        if (is_array($profile_id_array)) {
+                            if (isset($profile_id_array[basename(dirname(__FILE__))])) {
+                                $profile_id = $profile_id_array[basename(dirname(__FILE__))];
+                            } elseif (isset($profile_id_array['stripe'])) {
+                                $profile_id = $profile_id_array['stripe'];
+                            } elseif (isset($profile_id_array['stripecheckout'])) {
+                                $profile_id = $profile_id_array['stripecheckout'];
+                            }
+                        }
+                    }
+
+                    $profile_id_values_array = explode('|', $profile_id);
+                    $profile_id = $profile_id_values_array[0];
+
+                    if (isset($profile_id_values_array[1])) {
+                        $payment_method = $profile_id_values_array[1];
+                    } else {
+                        if ($profile_id != '') {
+                            try {
+                                $customer = \Stripe\Customer::retrieve($profile_id);
+                                $customer->name = $params["userFirstName"] . ' ' . $params["userLastName"];
+                                $customer->phone = $params['userPhone'];
+                                $customer->address = array(
+                                    'line1'       => $params["userAddress"],
+                                    'postal_code' => $params["userZipcode"],
+                                    'city'        => $params["userCity"],
+                                    'state'       => $params["userState"],
+                                    'country'     => $params["userCountry"]
+                                );
+
+                                $customer->save();
+                                $payment_method = $customer->default_source;
+                            } catch (Exception $e) {
+                                $profile_id = '';
+                            }
+                        }
+                    }
+
+                    if ($profile_id == '') {
+                        try {
+                            $customer = \Stripe\Customer::create(
+                                array(
+                                    'name'    => $params["userFirstName"] . ' ' . $params["userLastName"],
+                                    'address' => array(
+                                        'line1'       => $params["userAddress"],
+                                        'postal_code' => $params["userZipcode"],
+                                        'city'        => $params["userCity"],
+                                        'state'       => $params["userState"],
+                                        'country'     => $params["userCountry"]
+                                    ),
+                                    'email'   => $params['userEmail'],
+                                    'phone'   => $params['userPhone']
+                                )
+                            );
+
+                            $profile_id = $customer->id;
+                        } catch (Exception $e) {
+                            $profile_id = '';
+                        }
+
+                        if ($payment_method != '' && $profile_id != '') {
+                            try {
+                                $payment_method_obj = \Stripe\PaymentMethod::retrieve($payment_method);
+                                $payment_method_obj->attach(
+                                    array(
+                                        'customer' => $profile_id
+                                    )
+                                );
+                            } catch (Exception $e) {
+                            }
+                        }
+                    }
+
+                    $params['profile_id'] = $profile_id;
+                    $params['payment_method'] = $payment_method;
+
+                    if (!is_array($profile_id_array)) {
+                        $profile_id_array = array();
+                    }
+
+                    $profile_id_array[basename(dirname(__FILE__))] = $profile_id . '|' . $payment_method;
+                    $user->updateCustomTag('Billing-Profile-ID', serialize($profile_id_array));
+                    $user->save();
+
+                    // Create a PaymentIntent with amount and currency
+                    try {
+                        $paymentIntentParams = array(
+                            'amount'                    => $totalAmountCents,
+                            'currency'                  => $params['currency'],
+                            'automatic_payment_methods' => array(
+                                'enabled' => true,
+                            ),
+                            'setup_future_usage'        => 'off_session',
+                            'description'               => 'Invoice #' . $params['invoiceId']
+                        );
+
+                        if ($params['profile_id'] != '') {
+                            $paymentIntentParams['customer'] = $params['profile_id'];
+                        }
+
+                        if ($params['payment_method'] != '') {
+                            $paymentIntentParams['payment_method'] = $params['payment_method'];
+                        }
+
+                        $paymentIntent = \Stripe\PaymentIntent::create($paymentIntentParams);
+
+                        $this->view->callbackUrl = $callbackUrl;
+                        $this->view->clientSecret = $paymentIntent->client_secret;
+                        $this->view->publishableKey = $this->getVariable('Stripe Gateway Publishable Key');
+                        return $this->view->render('sca.phtml');
+                    } catch (Exception $e) {
+                        CE_Lib::log(4, $e->getMessage());
+                    }
+
+
+                    break;
+                } catch (Exception $e) {
+                    CE_Lib::log(4, $e->getMessage());
+                }
+        }
+    }
+
     public function autopayment($params)
     {
         $this->setupStripe();
@@ -158,15 +343,15 @@ class PluginStripe extends GatewayPlugin
 
             if ($payment_intent->status == "requires_capture") {
                 $result = $payment_intent->capture();
-                CE_Lib::log(4, $result);
             }
 
             if ($payment_intent->status == 'succeeded') {
                 $cPlugin = new Plugin($params['invoiceNumber'], "stripe", $this->user);
                 $cPlugin->setAmount($params['invoiceTotal']);
                 $cPlugin->setAction('charge');
-                $transactionId = $payment_intent->charges->data[0]->balance_transaction;
-                $amount = sprintf("%01.2f", round(($payment_intent->charges->data[0]->amount / 100), 2));
+                $transactionId = \Stripe\Charge::retrieve($payment_intent->latest_charge)->balance_transaction;
+
+                $amount = sprintf("%01.2f", round(($payment_intent->amount / 100), 2));
                 $cPlugin->setTransactionID($transactionId);
                 $cPlugin->PaymentAccepted($amount, "Stripe payment of {$amount} was accepted. (Transaction ID: {$transactionId})", $transactionId);
 
@@ -193,6 +378,13 @@ class PluginStripe extends GatewayPlugin
                     }
                 }
 
+                \Stripe\PaymentIntent::update(
+                    $payment_intent_id,
+                    [
+                        'customer' => $profile_id
+                    ]
+                );
+
                 $Billing_Profile_ID = '';
                 $profile_id_array = array();
                 $customerid = $cPlugin->m_Invoice->getUserID();
@@ -206,7 +398,7 @@ class PluginStripe extends GatewayPlugin
                     $profile_id_array = array();
                 }
 
-                $profile_id_array[basename(dirname(__FILE__))] = $profile_id.'|'.$payment_method;
+                $profile_id_array[basename(dirname(__FILE__))] = $profile_id . '|' . $payment_method;
                 $user->updateCustomTag('Billing-Profile-ID', serialize($profile_id_array));
                 $user->save();
                 //save profile id
@@ -893,7 +1085,7 @@ class PluginStripe extends GatewayPlugin
 
         //Pass this variable to your gateway to let it know where to send a callback.
         $urlFix = mb_substr(CE_Lib::getSoftwareURL(), -1, 1) == "//" ? '' : '/';
-        $callbackUrl = CE_Lib::getSoftwareURL().$urlFix.'plugins/gateways/'.basename(dirname(__FILE__)).'/callback.php?isPaymentMethod=1&clientHash='.$encryptedCustomerID.'&session_id={CHECKOUT_SESSION_ID}';
+        $callbackUrl = CE_Lib::getSoftwareURL() . $urlFix . 'plugins/gateways/' . basename(dirname(__FILE__)) . '/callback.php?isPaymentMethod=1&clientHash=' . $encryptedCustomerID . '&session_id={CHECKOUT_SESSION_ID}';
 
         $sessionParams = array(
             'payment_method_types' => array(
@@ -977,192 +1169,6 @@ class PluginStripe extends GatewayPlugin
             } catch (Exception $e) {
                 return '';
             }
-        }
-    }
-
-    public function getForm($params)
-    {
-        if ($this->getVariable('Stripe Gateway Publishable Key') == '') {
-            return '';
-        }
-
-        $this->view->from = $params['from'];
-
-        switch ($params['from']) {
-            case 'paymentmethod':
-                $strRet = '<input type="hidden" id="stripeUpdatePaymentMethod" name="stripe_plugincustomfields[stripeUpdatePaymentMethod]" value="1">'
-                    .'<button style="margin-left:0px;cursor:pointer;" class="btn btn-primary customButton stripeButton" id="customButton">'.$this->user->lang("Update Credit Card").'</button>';
-
-                return $strRet; 
-
-                break;
-            case 'signup':
-                $this->view->currency = $params['currency'];
-                $this->view->publishableKey = $this->getVariable('Stripe Gateway Publishable Key');
-
-                return $this->view->render('form.phtml');
-
-                break;
-            default:
-                $totalAmount = sprintf("%01.2f", round($params['invoiceBalanceDue'], 2));
-                $totalAmountCents = $totalAmount * 100;
-                $isSignup = 0;
-
-                //Need to check to see if user is coming from signup
-                if ($params['from'] == 'signup') {
-                    $isSignup = 1;
-                }
-
-                //Pass this variable to your gateway to let it know where to send a callback.
-                $urlFix = mb_substr(CE_Lib::getSoftwareURL(), -1, 1) == "//" ? '' : '/';
-                $callbackUrl = CE_Lib::getSoftwareURL() . $urlFix . 'plugins/gateways/' . basename(dirname(__FILE__)) . '/callback.php?isElements=1&isSignup=' . $isSignup . '&session_id={CHECKOUT_SESSION_ID}';
-
-                try {
-                    // Use Stripe's bindings...
-                    $this->setupStripe();
-
-                    $profile_id = '';
-                    $payment_method = '';
-
-                    $invoice = new Invoice($params['invoiceId']);
-                    $user = new User($invoice->getUserID());
-                    $params['CustomerID']       = $user->getId();
-                    $params['userID']           = "CE" . $user->getId();
-                    $params['userEmail']        = $user->getEmail();
-                    $params['userFirstName']    = $user->getFirstName();
-                    $params['userLastName']     = $user->getLastName();
-                    $params['userOrganization'] = $user->getOrganization();
-                    $params['userAddress']      = $user->getAddress();
-                    $params['userCity']         = $user->getCity();
-                    $params['userState']        = $user->getState();
-                    $params['userZipcode']      = $user->getZipCode();
-                    $params['userCountry']      = $user->getCountry();
-                    $params['userPhone']        = $user->getPhone();
-                    $params['validate']         = false;
-
-                    $Billing_Profile_ID = '';
-                    $profile_id_array = array();
-
-                    if ($user->getCustomFieldsValue('Billing-Profile-ID', $Billing_Profile_ID) && $Billing_Profile_ID != '') {
-                        $profile_id_array = unserialize($Billing_Profile_ID);
-
-                        if (is_array($profile_id_array)) {
-                            if (isset($profile_id_array[basename(dirname(__FILE__))])) {
-                                $profile_id = $profile_id_array[basename(dirname(__FILE__))];
-                            } elseif (isset($profile_id_array['stripe'])) {
-                                $profile_id = $profile_id_array['stripe'];
-                            } elseif (isset($profile_id_array['stripecheckout'])) {
-                                $profile_id = $profile_id_array['stripecheckout'];
-                            }
-                        }
-                    }
-
-                    $profile_id_values_array = explode('|', $profile_id);
-                    $profile_id = $profile_id_values_array[0];
-
-                    if (isset($profile_id_values_array[1])) {
-                        $payment_method = $profile_id_values_array[1];
-                    } else {
-                        if ($profile_id != '') {
-                            try {
-                                $customer = \Stripe\Customer::retrieve($profile_id);
-                                $customer->name = $params["userFirstName"] . ' ' . $params["userLastName"];
-                                $customer->phone = $params['userPhone'];
-                                $customer->address = array(
-                                    'line1'       => $params["userAddress"],
-                                    'postal_code' => $params["userZipcode"],
-                                    'city'        => $params["userCity"],
-                                    'state'       => $params["userState"],
-                                    'country'     => $params["userCountry"]
-                                );
-
-                                $customer->save();
-                                $payment_method = $customer->default_source;
-                            } catch (Exception $e) {
-                                $profile_id = '';
-                            }
-                        }
-                    }
-
-                    if ($profile_id == '') {
-                        try {
-                            $customer = \Stripe\Customer::create(
-                                array(
-                                    'name'    => $params["userFirstName"] . ' ' . $params["userLastName"],
-                                    'address' => array(
-                                        'line1'       => $params["userAddress"],
-                                        'postal_code' => $params["userZipcode"],
-                                        'city'        => $params["userCity"],
-                                        'state'       => $params["userState"],
-                                        'country'     => $params["userCountry"]
-                                    ),
-                                    'email'   => $params['userEmail'],
-                                    'phone'   => $params['userPhone']
-                                )
-                            );
-
-                            $profile_id = $customer->id;
-                        } catch (Exception $e) {
-                            $profile_id = '';
-                        }
-
-                        if ($payment_method != '' && $profile_id != '') {
-                            try {
-                                $payment_method_obj = \Stripe\PaymentMethod::retrieve($payment_method);
-                                $payment_method_obj->attach(
-                                    array(
-                                        'customer' => $profile_id
-                                    )
-                                );
-                            } catch (Exception $e) {
-                            }
-                        }
-                    }
-
-                    $params['profile_id'] = $profile_id;
-                    $params['payment_method'] = $payment_method;
-
-                    if (!is_array($profile_id_array)) {
-                        $profile_id_array = array();
-                    }
-
-                    $profile_id_array[basename(dirname(__FILE__))] = $profile_id.'|'.$payment_method;
-                    $user->updateCustomTag('Billing-Profile-ID', serialize($profile_id_array));
-                    $user->save();
-
-                    // Create a PaymentIntent with amount and currency
-                    try {
-                        $paymentIntentParams = array(
-                            'amount'                    => $totalAmountCents,
-                            'currency'                  => $params['currency'],
-                            'automatic_payment_methods' => array(
-                                'enabled' => true,
-                            ),
-                            'setup_future_usage'        => 'off_session',
-                            'description'               => 'Invoice #' . $params['invoiceId']
-                        );
-
-                        if ($params['profile_id'] != '') {
-                            $paymentIntentParams['customer'] = $params['profile_id'];
-                        }
-
-                        if ($params['payment_method'] != '') {
-                            $paymentIntentParams['payment_method'] = $params['payment_method'];
-                        }
-
-                        $paymentIntent = \Stripe\PaymentIntent::create($paymentIntentParams);
-
-                        $this->view->callbackUrl = $callbackUrl;
-                        $this->view->clientSecret = $paymentIntent->client_secret;
-                        $this->view->publishableKey = $this->getVariable('Stripe Gateway Publishable Key');
-                    } catch (Exception $e) {
-                    }
-
-                    return $this->view->render('sca.phtml');
-                    break;
-                } catch (Exception $e) {
-                    return '';
-                }
         }
     }
 

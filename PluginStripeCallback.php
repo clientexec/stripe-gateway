@@ -25,13 +25,17 @@ class PluginStripeCallback extends PluginCallback
             $totalAmount = sprintf("%01.2f", round($totalPay, 2));
             $totalAmountCents = $totalAmount * 100;
 
+            $customer = $this->findOrCreateStripeCustomer($_GET);
+
             $paymentIntentParams = array(
                 'amount'                    => $totalAmountCents,
                 'currency'                  => $_GET['currency'],
                 'automatic_payment_methods' => array(
                     'enabled' => true,
                 ),
-                'setup_future_usage'        => 'off_session'
+                'setup_future_usage'        => 'off_session',
+                'customer' => $customer['id'],
+                'capture_method' => 'manual'
             );
 
             $paymentIntent = \Stripe\PaymentIntent::create($paymentIntentParams);
@@ -39,7 +43,9 @@ class PluginStripeCallback extends PluginCallback
             header('Content-type: application/json');
             echo json_encode([
                 'id' => $paymentIntent->id,
-                'secret' => $paymentIntent->client_secret
+                'secret' => $paymentIntent->client_secret,
+                'country' => $customer['country'],
+                'postal_code' => $customer['postal_code']
             ]);
             die();
         } else {
@@ -66,7 +72,7 @@ class PluginStripeCallback extends PluginCallback
                     $user = new User($customerid);
 
                     $clientExecURL = CE_Lib::getSoftwareURL();
-                    $paymentMethodURL = $clientExecURL."/index.php?fuse=clients&controller=userprofile&view=paymentmethod";
+                    $paymentMethodURL = $clientExecURL . "/index.php?fuse=clients&controller=userprofile&view=paymentmethod";
 
                     $session = false;
 
@@ -101,7 +107,7 @@ class PluginStripeCallback extends PluginCallback
                                     $profile_id_array = array();
                                 }
 
-                                $profile_id_array[basename(dirname(__FILE__))] = $profile_id.'|'.$payment_method;
+                                $profile_id_array[basename(dirname(__FILE__))] = $profile_id . '|' . $payment_method;
                                 $user->updateCustomTag('Billing-Profile-ID', serialize($profile_id_array));
                                 $user->save();
                                 //save profile id
@@ -141,7 +147,7 @@ class PluginStripeCallback extends PluginCallback
                                     include_once 'library/CE/NE_PluginCollection.php';
                                     $pluginCollection = new NE_PluginCollection('gateways', $this->user);
 
-                                    if ($this->settings->get('plugin_'.$oldGateway.'_Update Gateway')) {
+                                    if ($this->settings->get('plugin_' . $oldGateway . '_Update Gateway')) {
                                         $userInformation['Gateway'] = $oldGateway;
                                         $userInformation['Action'] = 'delete';
                                         $pluginCollection->callFunction($oldGateway, 'UpdateGateway', $userInformation);
@@ -195,8 +201,8 @@ class PluginStripeCallback extends PluginCallback
                 }
             }
 
-            $transactionId = $payment_intent->charges->data[0]->balance_transaction;
-            $amount = sprintf("%01.2f", round(($payment_intent->charges->data[0]->amount / 100), 2));
+            $transactionId = \Stripe\Charge::retrieve($payment_intent->latest_charge)->balance_transaction;
+            $amount = sprintf("%01.2f", round(($payment_intent->amount / 100), 2));
             $success = ($payment_intent->status == 'succeeded');
 
             // Create Plugin class object to interact with CE.
@@ -207,18 +213,18 @@ class PluginStripeCallback extends PluginCallback
             $cPlugin->m_Last4 = "NA";
 
             $clientExecURL = CE_Lib::getSoftwareURL();
-            $invoiceviewURLSuccess = $clientExecURL."/index.php?fuse=billing&paid=1&controller=invoice&view=invoice&id=".$invoiceId;
-            $invoiceviewURLCancel = $clientExecURL."/index.php?fuse=billing&cancel=1&controller=invoice&view=invoice&id=".$invoiceId;
+            $invoiceviewURLSuccess = $clientExecURL . "/index.php?fuse=billing&paid=1&controller=invoice&view=invoice&id=" . $invoiceId;
+            $invoiceviewURLCancel = $clientExecURL . "/index.php?fuse=billing&cancel=1&controller=invoice&view=invoice&id=" . $invoiceId;
 
             //Need to check to see if user is coming from signup
             if ($_GET['isSignup']) {
                 // Actually handle the signup URL setting
                 if ($this->settings->get('Signup Completion URL') != '') {
-                    $return_url = $this->settings->get('Signup Completion URL').'?success=1';
+                    $return_url = $this->settings->get('Signup Completion URL') . '?success=1';
                     $cancel_url = $this->settings->get('Signup Completion URL');
                 } else {
-                    $return_url = $clientExecURL."/order.php?step=complete&pass=1";
-                    $cancel_url = $clientExecURL."/order.php?step=3";
+                    $return_url = $clientExecURL . "/order.php?step=complete&pass=1";
+                    $cancel_url = $clientExecURL . "/order.php?step=3";
                 }
             } else {
                 $return_url = $invoiceviewURLSuccess;
@@ -242,19 +248,19 @@ class PluginStripeCallback extends PluginCallback
                     $profile_id_array = array();
                 }
 
-                $profile_id_array[basename(dirname(__FILE__))] = $profile_id.'|'.$payment_method;
+                $profile_id_array[basename(dirname(__FILE__))] = $profile_id . '|' . $payment_method;
                 $user->updateCustomTag('Billing-Profile-ID', serialize($profile_id_array));
                 $user->save();
                 //save profile id
 
                 $cPlugin->PaymentAccepted($amount, "Stripe payment of {$amount} was accepted. (Transaction ID: {$transactionId})", $transactionId);
-                header('Location: '.$return_url);
+                header('Location: ' . $return_url);
             } else {
                 if (isset($transactionId)) {
                     $cPlugin->PaymentRejected("Stripe payment of {$amount} was rejected. (Transaction ID: {$transactionId})");
                 }
-                
-                header('Location: '.$cancel_url);
+
+                header('Location: ' . $cancel_url);
             }
             exit;
         }
@@ -263,7 +269,7 @@ class PluginStripeCallback extends PluginCallback
     private function redirect()
     {
         $clientExecURL = CE_Lib::getSoftwareURL();
-        $invoiceviewURLCancel = $clientExecURL."/index.php?fuse=billing&cancel=1&controller=invoice&view=allinvoices";
+        $invoiceviewURLCancel = $clientExecURL . "/index.php?fuse=billing&cancel=1&controller=invoice&view=allinvoices";
 
         //Need to check to see if user is coming from signup
         if ($_GET['isSignup']) {
@@ -271,12 +277,83 @@ class PluginStripeCallback extends PluginCallback
             if ($this->settings->get('Signup Completion URL') != '') {
                 $cancel_url = $this->settings->get('Signup Completion URL');
             } else {
-                $cancel_url = $clientExecURL."/order.php?step=3";
+                $cancel_url = $clientExecURL . "/order.php?step=3";
             }
         } else {
             $cancel_url = $invoiceviewURLCancel;
         }
-        header('Location: '.$cancel_url);
+        header('Location: ' . $cancel_url);
         exit;
+    }
+
+    private function findOrCreateStripeCustomer($params)
+    {
+        if ($this->user->getId() != 0) {
+            if ($this->user->getCustomFieldsValue('Billing-Profile-ID', $Billing_Profile_ID) && $Billing_Profile_ID != '') {
+                $profile_id_array = unserialize($Billing_Profile_ID);
+
+                if (is_array($profile_id_array)) {
+                    if (isset($profile_id_array[basename(dirname(__FILE__))])) {
+                        $profile_id = $profile_id_array[basename(dirname(__FILE__))];
+                    } elseif (isset($profile_id_array['stripe'])) {
+                        $profile_id = $profile_id_array['stripe'];
+                    } elseif (isset($profile_id_array['stripecheckout'])) {
+                        $profile_id = $profile_id_array['stripecheckout'];
+                    }
+                }
+
+                $profile_id_values_array = explode('|', $profile_id);
+                $profile_id = $profile_id_values_array[0];
+                if ($profile_id != '') {
+                    return [
+                        'id' => $profile_id,
+                        'country' => $this->user->getCountry(),
+                        'postal_code' => $this->user->getZipCode()
+                    ];
+                }
+            }
+
+            $name = $this->user->getFirstName() . ' ' . $this->user->getLastName();
+            $address = $this->user->getAddress();
+            $zip = $this->user->getZipCode();
+            $city = $this->user->getCity();
+            $state = $this->user->getState();
+            $country = $this->user->getCountry();
+            $email = $this->user->getEmail();
+            $phone = $this->user->getPhone();
+        } else {
+            $user = new User();
+            $fName = $params['CT_' . $user->getCustomFieldsObj()->_getCustomFieldIdByType(typeFIRSTNAME)];
+            $lName = $params['CT_' . $user->getCustomFieldsObj()->_getCustomFieldIdByType(typeLASTNAME)];
+            $name = $fName . ' ' . $lName;
+            $address = $params['CT_' . $user->getCustomFieldsObj()->_getCustomFieldIdByType(typeADDRESS)];
+            $zip = $params['CT_' . $user->getCustomFieldsObj()->_getCustomFieldIdByType(typeZIPCODE)];
+            $city = $params['CT_' . $user->getCustomFieldsObj()->_getCustomFieldIdByType(typeCITY)];
+            $state = $params['CT_' . $user->getCustomFieldsObj()->_getCustomFieldIdByType(typeSTATE)];
+            $country = $params['CT_' . $user->getCustomFieldsObj()->_getCustomFieldIdByType(typeCOUNTRY)];
+            $email = $params['CT_' . $user->getCustomFieldsObj()->_getCustomFieldIdByType(typeEMAIL)];
+            $phone = $params['CT_' . $user->getCustomFieldsObj()->_getCustomFieldIdByType(typePHONENUMBER)];
+        }
+
+        $customer = \Stripe\Customer::create(
+            [
+                'name' => $name,
+                'address'  => [
+                    'line1'       => $address,
+                    'postal_code' => $zip,
+                    'city'        => $city,
+                    'state'       => $state,
+                    'country'     => $country
+                ],
+                'email'    => $email,
+                'phone'    => $phone,
+            ]
+        );
+
+        return [
+            'id' => $customer->id,
+            'country' => $country,
+            'postal_code' => $zip
+        ];
     }
 }

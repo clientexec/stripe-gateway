@@ -12,55 +12,83 @@
         valid = $('#submitForm').parsley({
             excluded: 'input[type=button], input[type=submit], input[type=reset], :hidden'
         });
+
         valid.validate();
         if (valid.isValid()) {
             clientexec.mask();
-            stripe.confirmPayment({
-                elements,
-                redirect: "if_required"
-            }).then(function(result) {
-                if (result.error) {
-                    clientexec.unMask();
-                    clientexec.error(result.error.message);
-                } else {
-                    if (result.paymentIntent.status === 'succeeded') {
-                        cart.submit_form(0);
+            elements.submit();
+            var totalPay = $('#totalPay_raw').val();
+            $.get('plugins/gateways/stripe/callback.php?initStripe=1&totalPay=' + totalPay + '&currency=' + $('#stripe_currency').val() + '&params=' + $('#submitForm').serialize(), function( data ) {
+
+            }).done(function(data) {
+                $('#stripeTokenId').val(data.id);
+                paymentIntentSecret = data.secret;
+
+                stripe.confirmPayment({
+                    elements,
+                    clientSecret: paymentIntentSecret,
+                    redirect: "if_required",
+                    confirmParams: {
+                        return_url: '<?php echo $this->returnUrl; ?>',
+                        payment_method_data: {
+                            billing_details: {
+                                address: {
+                                    country: data.country,
+                                    postal_code: data.postal_code
+                                }
+                            }
+                        }
                     }
-                }
+                }).then(function(result) {
+                    if (result.error) {
+                        clientexec.unMask();
+                        clientexec.error(result.error.message);
+                    } else {
+                        if (result.paymentIntent.status === 'requires_capture') {
+                            cart.submit_form(0);
+                        }
+                    }
+                });
             });
         }
     }
 
     function initStripe()
     {
-
         var totalPay = $('#totalPay_raw').val();
         var paymentIntentSecret = '';
 
+        elements = stripe.elements({
+            mode: 'payment',
+            currency: $('#stripe_currency').val().toLowerCase(),
+            amount: Math.round(totalPay*100),
+            setupFutureUsage: 'off_session',
+            captureMethod: 'manual'
+        });
 
-        $.get('plugins/gateways/stripe/callback.php?initStripe=1&totalPay=' + totalPay + '&currency=' + $('#stripe_currency').val(), function( data ) {
-
-        }).done(function(data) {
-            paymentIntentSecret = data.secret;
-            $('#stripeTokenId').val(data.id);
-            elements = stripe.elements({clientSecret: paymentIntentSecret});
-
-            var card = elements.create("payment");
-            card.mount("#card-element");
-
-            card.on('change', function(event) {
-                var displayError = document.getElementById('card-errors');
-                if (event.error) {
-                    displayError.textContent = event.error.message;
-                } else {
-                    displayError.textContent = '';
+        var card = elements.create("payment",
+        {
+            fields: {
+                billingDetails: {
+                    address: {
+                        country: 'never',
+                        postalCode: 'never'
+                    }
                 }
-            });
+            }
+        });
+        card.mount("#card-element");
+
+        card.on('change', function(event) {
+            var displayError = document.getElementById('card-errors');
+            if (event.error) {
+                displayError.textContent = event.error.message;
+            } else {
+                displayError.textContent = '';
+            }
         });
     }
-
 </script>
-
 
 <a style="margin-left:0px;cursor:pointer;" class="app-btns primary customButton center-on-mobile mt-3 stripeButton <?php if (@$this->termsConditions) {
 ?>disabled<?php

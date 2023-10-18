@@ -1,12 +1,9 @@
 <script data-cfasync="false" src="https://js.stripe.com/v3/"></script>
 
-<!-- Display a payment form -->
-<div id="stripepayment-element">
-<!--Stripe.js injects the Payment Element-->
-</div>
+
+<div id="stripepayment-element" class="pb-2"></div>
+
 <div id="stripepayment-message" class="hidden"></div>
-</br>
-</br>
 <?php if ($this->from == 'signup') { ?>
     <a style="margin-left:0px;cursor:pointer;" class="btn-success btn btn-lg customButton center-on-mobile stripeButton <?php if (@$this->termsConditions) {
 ?>disabled<?php
