@@ -26,6 +26,21 @@ class PluginStripe extends GatewayPlugin
                 'description' => lang('Please enter your Stripe Gateway Secret Key here.'),
                 'value'       => ''
             ),
+            lang('Test Mode?') => array(
+                'type'        => 'yesno',
+                'description' => lang('Enable test mode, and use the test keys instead of the live keys.'),
+                'value'       => '0'
+            ),
+            lang('Stripe Test Publishable Key') => array(
+                'type'        => 'password',
+                'description' => lang('Please enter your Stripe Test Publishable Key here.'),
+                'value'       => ''
+            ),
+            lang('Stripe Test Secret Key') => array(
+                'type'        => 'password',
+                'description' => lang('Please enter your Stripe Test Secret Key here.'),
+                'value'       => ''
+            ),
             lang('Delete Client From Gateway') => array(
                 'type'        => 'yesno',
                 'description' => lang('Select YES if you want to delete the client from the gateway when the client changes the payment method or is deleted.'),
@@ -141,7 +156,7 @@ class PluginStripe extends GatewayPlugin
 
     public function getForm($params)
     {
-        if ($this->getVariable('Stripe Gateway Publishable Key') == '') {
+        if (($this->getVariable('Test Mode?') == '0' && $this->getVariable('Stripe Gateway Publishable Key') == '') || ($this->getVariable('Test Mode?') == '1' && $this->getVariable('Stripe Test Publishable Key') == '')) {
             return '';
         }
 
@@ -158,7 +173,11 @@ class PluginStripe extends GatewayPlugin
 
             case 'signup':
                 $this->view->currency = $params['currency'];
-                $this->view->publishableKey = $this->getVariable('Stripe Gateway Publishable Key');
+                if ($this->getVariable('Test Mode?') == '1') {
+                    $this->view->publishableKey = $this->getVariable('Stripe Test Publishable Key');
+                } else {
+                    $this->view->publishableKey = $this->getVariable('Stripe Gateway Publishable Key');
+                }
 
                 $urlFix = mb_substr(CE_Lib::getSoftwareURL(), -1, 1) == "//" ? '' : '/';
                 $this->view->returnUrl = CE_Lib::getSoftwareURL() . $urlFix . 'order.php?step=complete&pass=1';
@@ -295,7 +314,8 @@ class PluginStripe extends GatewayPlugin
                                 'enabled' => true,
                             ),
                             'setup_future_usage'        => 'off_session',
-                            'description'               => 'Invoice #' . $params['invoiceId']
+                            'description'               => 'Invoice #' . $params['invoiceId'],
+                            'capture_method'            => 'manual'
                         );
 
                         if ($params['profile_id'] != '') {
@@ -310,7 +330,11 @@ class PluginStripe extends GatewayPlugin
 
                         $this->view->callbackUrl = $callbackUrl;
                         $this->view->clientSecret = $paymentIntent->client_secret;
-                        $this->view->publishableKey = $this->getVariable('Stripe Gateway Publishable Key');
+                        if ($this->getVariable('Test Mode?') == '1') {
+                            $this->view->publishableKey = $this->getVariable('Stripe Test Publishable Key');
+                        } else {
+                            $this->view->publishableKey = $this->getVariable('Stripe Gateway Publishable Key');
+                        }
                         return $this->view->render('sca.phtml');
                     } catch (Exception $e) {
                         CE_Lib::log(4, $e->getMessage());
@@ -458,26 +482,6 @@ class PluginStripe extends GatewayPlugin
                     }
                 }
 
-                if ($profile_id == '') {
-                    $customerProfile = $this->createFullCustomerProfile($params);
-
-                    if (!$customerProfile['error']) {
-                        try {
-                            if ($payment_method != '') {
-                                $payment_method_obj = \Stripe\PaymentMethod::retrieve($payment_method);
-                                $payment_method_obj->attach(
-                                    array(
-                                        'customer' => $customerProfile['profile_id']
-                                    )
-                                );
-                            }
-
-                            $profile_id = $customerProfile['profile_id'];
-                        } catch (Exception $e) {
-                        }
-                    }
-                }
-
                 $params['profile_id'] = $profile_id;
                 $params['payment_method'] = $payment_method;
 
@@ -500,13 +504,18 @@ class PluginStripe extends GatewayPlugin
                         'payment_method'       => $params['payment_method'],
                         'description'          => 'Invoice #' . $params['invoiceNumber'],
                         'off_session'          => true,
-                        'confirm'              => true
+                        'confirm'              => true,
+                        'capture_method'       => 'manual'
                     )
                 );
 
+                if ($payment_intent->status == "requires_capture") {
+                    $result = $payment_intent->capture();
+                }
+
                 if ($payment_intent->status == 'succeeded') {
-                    $transactionId = $payment_intent->charges->data[0]->balance_transaction;
-                    $amount = sprintf("%01.2f", round(($payment_intent->charges->data[0]->amount / 100), 2));
+                    $transactionId = \Stripe\Charge::retrieve($payment_intent->latest_charge)->balance_transaction;
+                    $amount = sprintf("%01.2f", round(($payment_intent->amount / 100), 2));
                     $cPlugin->setTransactionID($transactionId);
                     $cPlugin->PaymentAccepted($amount, "Stripe payment of {$amount} was accepted. (Transaction ID: {$transactionId})", $transactionId);
 
@@ -671,55 +680,34 @@ class PluginStripe extends GatewayPlugin
                         )
                     );
                 }
+
+                $profile_id = $customer->id;
+                $Billing_Profile_ID = '';
+                $profile_id_array = array();
+                $user = new User($params['CustomerID']);
+
+                if ($user->getCustomFieldsValue('Billing-Profile-ID', $Billing_Profile_ID) && $Billing_Profile_ID != '') {
+                    $profile_id_array = unserialize($Billing_Profile_ID);
+                }
+
+                if (!is_array($profile_id_array)) {
+                    $profile_id_array = array();
+                }
+
+                $profile_id_array[basename(dirname(__FILE__))] = $profile_id;
+                $user->updateCustomTag('Billing-Profile-ID', serialize($profile_id_array));
+                $user->save();
+
+                return array(
+                    'error'               => false,
+                    'profile_id'          => $profile_id
+                );
             } else {
-                $customer = \Stripe\Customer::create(
-                    array(
-                        'name'     => $params["userFirstName"] . ' ' . $params["userLastName"],
-                        'address'  => array(
-                            'line1'       => $params["userAddress"],
-                            'postal_code' => $params["userZipcode"],
-                            'city'        => $params["userCity"],
-                            'state'       => $params["userState"],
-                            'country'     => $params["userCountry"]
-                        ),
-                        'email'    => $params['userEmail'],
-                        'phone'    => $params['userPhone'],
-                        'card'     => array(
-                            'number'          => $params['userCCNumber'],
-                            'exp_month'       => $params['cc_exp_month'],
-                            'exp_year'        => $params['cc_exp_year'],
-                            'address_line1'   => $params["userAddress"],
-                            'address_city'    => $params["userCity"],
-                            'address_zip'     => $params["userZipcode"],
-                            'address_state'   => $params["userState"],
-                            'address_country' => $params["userCountry"]
-                        ),
-                        'validate' => $validate
-                    )
+                return array(
+                    'error'  => true,
+                    'detail' => $this->user->lang("There was an error performing this operation.") . " " . $this->user->lang("payment_method value is missing.")
                 );
             }
-
-            $profile_id = $customer->id;
-            $Billing_Profile_ID = '';
-            $profile_id_array = array();
-            $user = new User($params['CustomerID']);
-
-            if ($user->getCustomFieldsValue('Billing-Profile-ID', $Billing_Profile_ID) && $Billing_Profile_ID != '') {
-                $profile_id_array = unserialize($Billing_Profile_ID);
-            }
-
-            if (!is_array($profile_id_array)) {
-                $profile_id_array = array();
-            }
-
-            $profile_id_array[basename(dirname(__FILE__))] = $profile_id;
-            $user->updateCustomTag('Billing-Profile-ID', serialize($profile_id_array));
-            $user->save();
-
-            return array(
-                'error'               => false,
-                'profile_id'          => $profile_id
-            );
         } catch (\Stripe\Error\Card $e) {
             $body = $e->getJsonBody();
             $err  = $body['error'];
@@ -1174,7 +1162,12 @@ class PluginStripe extends GatewayPlugin
 
     private function setupStripe()
     {
-        \Stripe\Stripe::setApiKey($this->settings->get('plugin_stripe_Stripe Gateway Secret Key'));
+        if ($this->getVariable('Test Mode?') == '1') {
+            $key = $this->getVariable('Stripe Test Secret Key');
+        } else {
+            $key = $this->getVariable('Stripe Gateway Secret Key');
+        }
+        \Stripe\Stripe::setApiKey($key);
         \Stripe\Stripe::setAppInfo(
             'Clientexec',
             CE_Lib::getAppVersion(),

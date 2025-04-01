@@ -10,8 +10,14 @@ class PluginStripeCallback extends PluginCallback
 {
     public function processCallback()
     {
+        if ($this->settings->get('plugin_stripe_Test Mode?') == '1') {
+            $key = $this->settings->get('plugin_stripe_Stripe Test Secret Key');
+        } else {
+            $key = $this->settings->get('plugin_stripe_Stripe Gateway Secret Key');
+        }
+
         CE_Lib::log(4, 'Stripe callback invoked');
-        \Stripe\Stripe::setApiKey($this->settings->get('plugin_stripe_Stripe Gateway Secret Key'));
+        \Stripe\Stripe::setApiKey($key);
         \Stripe\Stripe::setAppInfo(
             'Clientexec',
             CE_Lib::getAppVersion(),
@@ -54,7 +60,7 @@ class PluginStripeCallback extends PluginCallback
                 $payment_intent = \Stripe\PaymentIntent::retrieve($payment_intent_id);
                 $invoiceId = substr($payment_intent->description, 9);
             } else {
-                $stripe = new \Stripe\StripeClient($this->settings->get('plugin_stripe_Stripe Gateway Secret Key'));
+                $stripe = new \Stripe\StripeClient($key);
 
                 if (isset($_GET['isPaymentMethod']) && $_GET['isPaymentMethod']) {
                     //Get client Id from hash
@@ -199,6 +205,10 @@ class PluginStripeCallback extends PluginCallback
                         $this->redirect();
                     }
                 }
+            }
+
+            if ($payment_intent->status == "requires_capture") {
+                $result = $payment_intent->capture();
             }
 
             $transactionId = \Stripe\Charge::retrieve($payment_intent->latest_charge)->balance_transaction;
